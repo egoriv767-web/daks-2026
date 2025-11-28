@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ДАКС 2026 | Eastern Start</title>
+    
+    <!-- React Core -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Styling & UI -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- 3D Graphics -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore-compat.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        space: { 900: '#050B14', 800: '#0F172A', accent: '#00F0FF' },
+                        glass: 'rgba(255, 255, 255, 0.03)'
+                    },
+                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    animation: { 
+                        'float': 'float 8s ease-in-out infinite',
+                        'scan': 'scan 4s linear infinite'
+                    },
+                    keyframes: { 
+                        float: { '0%, 100%': { transform: 'translateY(0)' }, '50%': { transform: 'translateY(-20px)' } },
+                        scan: { '0%': { backgroundPosition: '0% 0%' }, '100%': { backgroundPosition: '0% 100%' } }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;700;900&family=JetBrains+Mono:wght@400;700&display=swap');
+        body { background-color: #050B14; color: white; margin: 0; overflow-x: hidden; font-family: 'Inter', sans-serif; }
+        
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.7);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+        
+        .noise-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMDAiIGhlaWdodD0iMjAwIj48ZmlsdGVyIGlkPSJnoiPjxmZVR1cmJ1bGVuY2UgdHlwZT0iZnJhY3RhbE5vaXNlIiBiYXNlRnJlcXVlbmN5PSIwLjY1IiBudW1PY3RhdmVzPSIzIiBzdGl0Y2hUaWxlcz0ic3RpdGNoIi8+PC9maWx0ZXI+PHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgZmlsdGVyPSJ1cmwoI2cpIiBvcGFjaXR5PSIwLjAzIi8+PC9zdmc+');
+            pointer-events: none; z-index: 5; opacity: 0.5;
+        }
+
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        canvas { position: fixed; top: 0; left: 0; z-index: 0; }
+        
+        /* Smooth Page Transitions */
+        .fade-enter { opacity: 0; transform: scale(0.98); filter: blur(4px); }
+        .fade-enter-active { opacity: 1; transform: scale(1); filter: blur(0); transition: all 500ms cubic-bezier(0.16, 1, 0.3, 1); }
+        .fade-exit { opacity: 1; transform: scale(1); }
+        .fade-exit-active { opacity: 0; transform: scale(1.02); filter: blur(4px); transition: all 300ms ease-in; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+
+        // --- FIREBASE SETUP ---
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app';
+
+        // --- 3D GLOBE COMPONENT ---
+        const Globe = () => {
+            const mountRef = useRef(null);
+
+            useEffect(() => {
+                const scene = new THREE.Scene();
+                // Fog for depth
+                scene.fog = new THREE.FogExp2(0x050B14, 0.002);
+
+                const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+                const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+                
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                mountRef.current.appendChild(renderer.domElement);
+
+                // Group to hold globe
+                const globeGroup = new THREE.Group();
+                scene.add(globeGroup);
+
+                // 1. Wireframe Sphere
+                const geometry = new THREE.IcosahedronGeometry(4, 2);
+                const material = new THREE.MeshBasicMaterial({ 
+                    color: 0x1e293b, 
+                    wireframe: true,
+                    transparent: true,
+                    opacity: 0.1
+                });
+                const sphere = new THREE.Mesh(geometry, material);
+                globeGroup.add(sphere);
+
+                // 2. Particles (Stars/Atmosphere)
+                const particlesGeom = new THREE.BufferGeometry();
+                const particlesCount = 2000;
+                const posArray = new Float32Array(particlesCount * 3);
+                for(let i = 0; i < particlesCount * 3; i++) {
+                    posArray[i] = (Math.random() - 0.5) * 20;
+                }
+                particlesGeom.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+                const particlesMat = new THREE.PointsMaterial({
+                    size: 0.02,
+                    color: 0x00F0FF,
+                    transparent: true,
+                    opacity: 0.6,
+                });
+                const starField = new THREE.Points(particlesGeom, particlesMat);
+                scene.add(starField);
+
+                // 3. Vostochny Marker (Approximation)
+                const markerGeom = new THREE.SphereGeometry(0.05, 16, 16);
+                const markerMat = new THREE.MeshBasicMaterial({ color: 0xFF3366 });
+                const marker = new THREE.Mesh(markerGeom, markerMat);
+                // Position roughly where Vostochny/Amur is on a sphere
+                marker.position.set(2.5, 2.5, 2); 
+                globeGroup.add(marker);
+
+                // Camera Position
+                camera.position.z = 8;
+
+                // Mouse Interaction
+                let mouseX = 0;
+                let mouseY = 0;
+                let targetRotationX = 0;
+                let targetRotationY = 0;
+
+                const onDocumentMouseMove = (event) => {
+                    mouseX = (event.clientX - window.innerWidth / 2) * 0.0005;
+                    mouseY = (event.clientY - window.innerHeight / 2) * 0.0005;
+                };
+                document.addEventListener('mousemove', onDocumentMouseMove);
+
+                const animate = () => {
+                    requestAnimationFrame(animate);
+
+                    targetRotationY += 0.002; // Auto rotation
+                    
+                    // Smooth easing
+                    globeGroup.rotation.y += 0.05 * (targetRotationY + mouseX - globeGroup.rotation.y);
+                    globeGroup.rotation.x += 0.05 * (mouseY - globeGroup.rotation.x);
+                    
+                    starField.rotation.y -= 0.0005;
+
+                    renderer.render(scene, camera);
+                };
+                animate();
+
+                const handleResize = () => {
+                    camera.aspect = window.innerWidth / window.innerHeight;
+                    camera.updateProjectionMatrix();
+                    renderer.setSize(window.innerWidth, window.innerHeight);
+                };
+                window.addEventListener('resize', handleResize);
+
+                return () => {
+                    document.removeEventListener('mousemove', onDocumentMouseMove);
+                    window.removeEventListener('resize', handleResize);
+                    if (mountRef.current) mountRef.current.removeChild(renderer.domElement);
+                }
+            }, []);
+
+            return <div ref={mountRef} className="fixed inset-0 z-0" />;
+        };
+
+        // --- ICONS WRAPPER ---
+        const Icon = ({ name, size = 24, className }) => {
+            const ref = useRef(null);
+            useEffect(() => {
+                if (window.lucide) {
+                    window.lucide.createIcons({
+                        attrs: { class: className, width: size, height: size },
+                        nameAttr: 'data-lucide',
+                        icons: { [name]: ref.current }
+                    });
+                }
+            }, [name]);
+            return <i data-lucide={name} ref={ref} className={className}></i>;
+        };
+
+        // --- APP CONTROLLER ---
+        const App = () => {
+            const [user, setUser] = useState(null);
+            const [view, setView] = useState('landing');
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                const init = async () => {
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await auth.signInWithCustomToken(__initial_auth_token);
+                    } else {
+                        await auth.signInAnonymously();
+                    }
+                };
+                init();
+                const unsub = auth.onAuthStateChanged(u => {
+                    if (u) {
+                        db.collection('artifacts').doc(appId).collection('users').doc(u.uid).collection('profile').doc('main')
+                        .onSnapshot(doc => {
+                            if (doc.exists) {
+                                setUser({ ...u, ...doc.data() });
+                                setView('dashboard');
+                            } else {
+                                setUser(u);
+                            }
+                            setLoading(false);
+                        });
+                    } else setLoading(false);
+                });
+                return () => unsub();
+            }, []);
+
+            const handleRegister = async (role, name, email) => {
+                if (!user) return;
+                setLoading(true);
+                try {
+                    await db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('profile').doc('main').set({
+                        name, email, role, registeredAt: new Date().toISOString(), status: 'pending'
+                    });
+                    setView('dashboard');
+                } catch(e) { console.error(e); }
+                setLoading(false);
+            };
+
+            const handleLogout = async () => {
+                await auth.signOut();
+                window.location.reload();
+            };
+
+            if (loading) return (
+                <div className="h-screen w-full flex flex-col items-center justify-center bg-space-900 text-cyan-400 font-mono">
+                    <div className="w-8 h-8 border-t-2 border-cyan-400 rounded-full animate-spin mb-4"></div>
+                    <div className="text-xs tracking-widest">INITIALIZING DAKS OS...</div>
+                </div>
+            );
+
+            return (
+                <>
+                    <div className="noise-overlay"></div>
+                    <Globe />
+                    <div className="relative z-10 min-h-screen flex flex-col">
+                        <Navbar user={user} setView={setView} onLogout={handleLogout} />
+                        <main className="flex-grow pt-24 px-4 pb-12">
+                            {view === 'landing' && <Landing onRegister={handleRegister} setView={setView} />}
+                            {view === 'dashboard' && <Dashboard user={user} setView={setView} />}
+                            {view === 'program' && <ProgramPage onBack={() => setView('landing')} />}
+                            {view === 'exhibition' && <InfoPage type="exhibition" onBack={() => setView('landing')} />}
+                        </main>
+                        <footer className="text-center py-6 text-white/20 text-[10px] uppercase tracking-widest font-mono">
+                            DAKS-2026 // SYSTEM V4.0 // AMUR REGION
+                        </footer>
+                    </div>
+                </>
+            );
+        };
+
+        const Navbar = ({ user, setView, onLogout }) => (
+            <nav className="fixed top-0 w-full z-50 px-6 py-4 flex justify-between items-center bg-gradient-to-b from-space-900/90 to-transparent backdrop-blur-sm border-b border-white/5">
+                <div className="flex items-center gap-2 cursor-pointer" onClick={() => setView('landing')}>
+                    <div className="w-2 h-2 bg-cyan-400 rounded-full animate-pulse"></div>
+                    <div className="font-bold text-xl tracking-tighter">DAKS<span className="text-white/50">26</span></div>
+                </div>
+                {user?.role && (
+                    <button onClick={onLogout} className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-white transition-colors border border-white/10 px-3 py-1.5 rounded-full hover:bg-white/5">
+                        <Icon name="log-out" size={12}/> Выход
+                    </button>
+                )}
+            </nav>
+        );
+
+        const Landing = ({ onRegister, setView }) => {
+            const [modal, setModal] = useState(null);
+
+            return (
+                <div className="max-w-7xl mx-auto flex flex-col items-center text-center animate-fade-in">
+                    <div className="mt-12 mb-24 relative">
+                        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-cyan-500/30 bg-cyan-500/5 backdrop-blur-md text-cyan-400 text-[10px] font-bold tracking-[0.3em] mb-8">
+                            <span className="w-1 h-1 bg-cyan-400 rounded-full"></span>
+                            10-12.04.2026
+                        </div>
+                        <h1 className="text-7xl md:text-[9rem] font-black mb-6 tracking-tighter leading-[0.85] text-white mix-blend-overlay opacity-90">
+                            VOSTOCHNY
+                        </h1>
+                        <p className="text-lg md:text-xl text-slate-400 max-w-2xl mx-auto mb-12 font-light leading-relaxed">
+                            Детский авиационно-космический салон им. И.П. Волка.
+                            <br/><span className="text-white/60">Построй своё будущее на орбите.</span>
+                        </p>
+                        
+                        <div className="flex flex-col md:flex-row gap-4 justify-center items-center">
+                            <button onClick={() => setModal('participant')} className="group relative px-10 py-5 bg-white text-black rounded-full font-bold text-sm tracking-widest uppercase hover:scale-105 transition-transform">
+                                <span className="relative z-10 flex items-center gap-2">Подать проект <Icon name="arrow-right" size={16}/></span>
+                            </button>
+                            <button onClick={() => setView('program')} className="px-10 py-5 glass-panel text-white rounded-full font-bold text-sm tracking-widest uppercase hover:bg-white/10 transition-colors border-white/20">
+                                Программа
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="grid md:grid-cols-3 gap-6 w-full max-w-5xl">
+                        {[
+                            {id: 'exhibition', title: 'Выставка', desc: 'Зоны ИИ, Космоса и Прототипов', icon: 'cpu', color: 'text-cyan-400'},
+                            {id: 'program', title: 'Наука', desc: 'Конференция и публикации', icon: 'atom', color: 'text-violet-400'},
+                            {id: 'program', title: 'Карьера', desc: 'ВЛЭК и Шоу дронов', icon: 'rocket', color: 'text-emerald-400'}
+                        ].map((item, i) => (
+                            <div key={i} onClick={() => setView(item.id)} className="glass-panel p-8 rounded-3xl text-left cursor-pointer hover:-translate-y-2 transition-transform duration-500 group border-t border-white/10">
+                                <div className={`mb-6 p-3 rounded-2xl glass-panel inline-block ${item.color}`}>
+                                    <Icon name={item.icon} size={28} />
+                                </div>
+                                <h3 className="text-2xl font-bold mb-2">{item.title}</h3>
+                                <p className="text-slate-500 text-sm mb-6">{item.desc}</p>
+                                <div className="flex items-center gap-2 text-[10px] font-bold tracking-widest uppercase opacity-50 group-hover:opacity-100 transition-opacity">
+                                    Подробнее <Icon name="chevron-right" size={12}/>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+
+                    {modal && (
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xl animate-fade-in">
+                            <div className="glass-panel p-8 rounded-3xl w-full max-w-md relative border border-white/20">
+                                <button onClick={() => setModal(null)} className="absolute top-6 right-6 text-slate-500 hover:text-white"><Icon name="x" size={24}/></button>
+                                <div className="mb-6">
+                                    <div className="text-cyan-400 text-xs font-bold tracking-widest uppercase mb-2">Registration</div>
+                                    <h3 className="text-3xl font-bold text-white">Новый пилот</h3>
+                                </div>
+                                <form onSubmit={(e) => { e.preventDefault(); onRegister(modal, e.target.name.value, e.target.email.value); }} className="space-y-4">
+                                    <input name="name" required placeholder="ФИО" className="w-full bg-black/40 border border-white/10 rounded-xl p-4 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 transition-colors font-mono text-sm" />
+                                    <input name="email" type="email" required placeholder="EMAIL" className="w-full bg-black/40 border border-white/10 rounded-xl p-4 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 transition-colors font-mono text-sm" />
+                                    <button className="w-full bg-cyan-500 text-black p-4 rounded-xl font-bold hover:bg-cyan-400 transition-colors uppercase tracking-widest text-xs mt-4">
+                                        Начать миссию
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const ProgramPage = ({ onBack }) => (
+            <div className="max-w-4xl mx-auto animate-fade-in">
+                <button onClick={onBack} className="flex items-center gap-2 text-slate-400 hover:text-white mb-8 group transition-colors text-xs font-bold uppercase tracking-widest">
+                    <Icon name="arrow-left" size={14} className="group-hover:-translate-x-1 transition-transform"/> Назад
+                </button>
+                <h1 className="text-5xl font-bold mb-10">Программа ДАКС</h1>
+                
+                <div className="space-y-6">
+                    {[
+                        { day: '10.04', title: 'Стратегический день', events: ['Круглый стол «Кадры для неба»', 'Экспертная сессия', 'Открытие регистрации'] },
+                        { day: '11.04', title: 'День Отбора', events: ['Битва Дронов (Квалификация)', 'Выставка проектов', 'Ночное Шоу «Дорога к звездам»'] },
+                        { day: '12.04', title: 'День «Восточный»', events: ['Трансфер на космодром', 'Наблюдение за пуском', 'Награждение'] }
+                    ].map((d, i) => (
+                        <div key={i} className="glass-panel p-8 rounded-3xl flex flex-col md:flex-row gap-8 items-start border-l-4 border-cyan-500/50">
+                            <div className="md:w-32 flex-shrink-0">
+                                <div className="text-4xl font-bold text-white/20 font-mono">{d.day}</div>
+                            </div>
+                            <div>
+                                <h3 className="text-2xl font-bold mb-4">{d.title}</h3>
+                                <ul className="space-y-3">
+                                    {d.events.map((ev, k) => (
+                                        <li key={k} className="flex items-center gap-3 text-slate-400">
+                                            <div className="w-1.5 h-1.5 bg-cyan-500 rounded-full"></div>
+                                            {ev}
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
+
+        const Dashboard = ({ user, setView }) => {
+            return (
+                <div className="max-w-4xl mx-auto animate-fade-in pt-10">
+                    <div className="glass-panel p-8 rounded-3xl mb-8 flex flex-col md:flex-row items-center gap-8 relative overflow-hidden">
+                        <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/10 rounded-full blur-[80px] -mr-16 -mt-16 pointer-events-none"></div>
+                        <div className="w-24 h-24 rounded-2xl bg-gradient-to-br from-cyan-400 to-blue-600 p-[2px]">
+                            <div className="w-full h-full bg-black rounded-2xl flex items-center justify-center text-4xl font-bold text-white">
+                                {user.name[0]}
+                            </div>
+                        </div>
+                        <div className="text-center md:text-left">
+                            <div className="text-xs font-mono text-cyan-400 mb-2">ID: {user.uid.slice(0,8).toUpperCase()}</div>
+                            <h2 className="text-3xl font-bold text-white mb-2">{user.name}</h2>
+                            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10">
+                                <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
+                                <span className="text-[10px] uppercase font-bold tracking-widest text-slate-300">{user.role === 'participant' ? 'Участник' : 'Эксперт'}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="grid md:grid-cols-2 gap-6">
+                        <div className="glass-panel p-8 rounded-3xl">
+                            <h3 className="text-lg font-bold mb-6 flex items-center gap-2"><Icon name="activity" size={20} className="text-cyan-400"/> Статус заявки</h3>
+                            <div className="space-y-6 relative pl-4 border-l border-white/10">
+                                <div className="relative">
+                                    <div className="absolute -left-[21px] w-3 h-3 bg-green-500 rounded-full border-2 border-black"></div>
+                                    <div className="text-xs text-slate-500 font-mono mb-1">{new Date(user.registeredAt).toLocaleDateString()}</div>
+                                    <div className="text-sm font-bold">Регистрация</div>
+                                </div>
+                                <div className="relative">
+                                    <div className="absolute -left-[21px] w-3 h-3 bg-cyan-400 rounded-full border-2 border-black animate-pulse"></div>
+                                    <div className="text-sm font-bold text-cyan-400">Проверка данных</div>
+                                    <div className="text-xs text-slate-400 mt-1">Допуск СБ в процессе...</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="glass-panel p-8 rounded-3xl flex flex-col items-center justify-center text-center">
+                            <div className="bg-white p-3 rounded-xl mb-4">
+                                <img src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=DAKS-${user.uid}`} alt="QR" className="w-32 h-32 mix-blend-multiply opacity-90"/>
+                            </div>
+                            <div className="text-xs text-slate-500 font-mono">DIGITAL PASS</div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+        
+        const InfoPage = ({ type, onBack }) => { return <div/>; } // Placeholder
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
